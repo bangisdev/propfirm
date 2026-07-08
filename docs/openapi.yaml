@@ -1,0 +1,322 @@
+openapi: 3.0.3
+info:
+  title: PropFirm API
+  description: CFD Proprietary Trading Firm platform API — Phases 1-2 (Authentication, Challenges, Payments, Trading Accounts)
+  version: 1.0.0
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new trader account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password, password_confirmation]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 100, example: "Jane Trader" }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 10, example: "StrongPass1!" }
+                password_confirmation: { type: string }
+                referral_code: { type: string, nullable: true, example: "AB12CD34" }
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthResponse" }
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationError" }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Authenticate with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthResponse" }
+        "422":
+          description: Invalid credentials, suspended account, or rate-limited
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationError" }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotate the refresh token cookie and issue a new access token
+      description: >
+        Requires the httpOnly `refresh_token` cookie set by /login or /register.
+        The old refresh token is revoked and a new one issued (rotation).
+      responses:
+        "200":
+          description: New access token issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      access_token: { type: string }
+                      expires_in: { type: integer, example: 900 }
+        "401":
+          description: Refresh token missing, expired, revoked, or reused
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get the authenticated user's profile
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/User" }
+        "401":
+          description: Unauthenticated
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Invalidate the access token and revoke the refresh token
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Logged out
+
+  /challenges:
+    get:
+      tags: [Challenges]
+      summary: List active challenge pricing tiers (public)
+      responses:
+        "200":
+          description: List of challenges
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Challenge" }
+
+  /challenges/{id}:
+    get:
+      tags: [Challenges]
+      summary: Get a single challenge's details and rules
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Challenge details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Challenge" }
+        "404":
+          description: Challenge not found or inactive
+
+  /checkout:
+    post:
+      tags: [Payments]
+      summary: Create a pending order and initialize a Paystack transaction
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challenge_id]
+              properties:
+                challenge_id: { type: string, format: uuid }
+                coupon_code: { type: string, nullable: true }
+      responses:
+        "201":
+          description: Order created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      order: { $ref: "#/components/schemas/Order" }
+                      authorization_url:
+                        type: string
+                        nullable: true
+                        description: Null when a 100%-off coupon skipped the payment gateway entirely.
+        "422":
+          description: Invalid challenge or coupon
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationError" }
+
+  /checkout/{reference}:
+    get:
+      tags: [Payments]
+      summary: Poll order status after the Paystack redirect (also reconciles if the webhook is delayed)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: reference
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Current order status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: "#/components/schemas/Order" }
+
+  /orders:
+    get:
+      tags: [Payments]
+      summary: List the authenticated user's order history
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Paginated order list
+
+  /webhooks/paystack:
+    post:
+      tags: [Payments]
+      summary: Paystack webhook receiver (HMAC-SHA512 signature verified, called by Paystack only)
+      responses:
+        "200": { description: Event received and processed (or already processed) }
+        "401": { description: Invalid or missing signature }
+
+  /trading-accounts:
+    get:
+      tags: [Trading Accounts]
+      summary: List the authenticated user's MT5 trading accounts
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: List of trading accounts }
+
+  /trading-accounts/{id}/credentials:
+    get:
+      tags: [Trading Accounts]
+      summary: Reveal MT5 login credentials for a trading account
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: MT5 credentials }
+        "403": { description: Not the owner of this account }
+        "409": { description: Account still being provisioned }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Challenge:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        phase_count: { type: integer }
+        account_size: { type: number }
+        currency: { type: string }
+        price: { type: number }
+        rules:
+          type: object
+          properties:
+            profit_target_phase1_pct: { type: number }
+            profit_target_phase2_pct: { type: number, nullable: true }
+            max_daily_drawdown_pct: { type: number }
+            max_total_drawdown_pct: { type: number }
+            min_trading_days: { type: integer }
+            profit_split_pct: { type: number }
+            news_trading_restricted: { type: boolean }
+            weekend_holding_allowed: { type: boolean }
+
+    Order:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        reference: { type: string }
+        challenge: { $ref: "#/components/schemas/Challenge" }
+        subtotal: { type: number }
+        discount_amount: { type: number }
+        total: { type: number }
+        currency: { type: string }
+        status: { type: string, enum: [pending, paid, failed, expired, refunded] }
+        paid_at: { type: string, format: date-time, nullable: true }
+        expires_at: { type: string, format: date-time }
+
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string, format: email }
+        role: { type: string, enum: [trader, admin, affiliate, support] }
+        kyc_status: { type: string, enum: [unverified, pending, verified, rejected] }
+        email_verified_at: { type: string, format: date-time, nullable: true }
+        referral_code: { type: string }
+        created_at: { type: string, format: date-time }
+
+    AuthResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            user: { $ref: "#/components/schemas/User" }
+            access_token: { type: string }
+            expires_in: { type: integer, example: 900 }
+
+    ValidationError:
+      type: object
+      properties:
+        message: { type: string }
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }

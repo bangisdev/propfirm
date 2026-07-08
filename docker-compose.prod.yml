@@ -1,0 +1,90 @@
+name: propfirm
+
+services:
+  backend:
+    build:
+      context: ./backend
+      target: production
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env.production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks: [propfirm]
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./infra/nginx/backend.conf:/etc/nginx/conf.d/default.conf:ro
+      - backend_public:/var/www/html/public:ro
+    depends_on:
+      - backend
+    networks: [propfirm]
+
+  queue-worker:
+    build:
+      context: ./backend
+      target: production
+    restart: unless-stopped
+    command: php artisan queue:work redis --sleep=1 --tries=3 --backoff=5 --max-jobs=1000
+    env_file:
+      - ./backend/.env.production
+    depends_on:
+      - postgres
+      - redis
+    networks: [propfirm]
+
+  scheduler:
+    build:
+      context: ./backend
+      target: production
+    restart: unless-stopped
+    command: sh -c "while true; do php artisan schedule:run --no-interaction; sleep 60; done"
+    env_file:
+      - ./backend/.env.production
+    networks: [propfirm]
+
+  frontend:
+    build:
+      context: ./frontend
+      target: production
+    restart: unless-stopped
+    ports:
+      - "443:80"
+    networks: [propfirm]
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env.production
+    volumes:
+      - propfirm_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U propfirm"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [propfirm]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - propfirm_redis_data:/data
+    networks: [propfirm]
+
+networks:
+  propfirm:
+    driver: bridge
+
+volumes:
+  propfirm_pg_data:
+  propfirm_redis_data:
+  backend_public:
