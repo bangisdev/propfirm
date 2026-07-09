@@ -49,6 +49,13 @@ export interface TradingAccount {
   provisioned_at: string | null
   breached_at: string | null
   breach_reason: string | null
+  rule_progress: {
+    min_trading_days: number
+    profit_target_pct: number | null
+    profit_progress_pct: number
+    daily_drawdown_used_pct: number
+    max_drawdown_used_pct: number
+  } | null
 }
 
 export const challengesService = {

@@ -5,6 +5,7 @@ import { Eye, EyeOff, Loader2, Copy, Check } from 'lucide-react'
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { ProgressBar } from '@/components/ui/progress-bar'
 import { tradingAccountsService, type TradingAccount } from '@/lib/challenges-service'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { cn } from '@/lib/utils'
@@ -148,6 +149,33 @@ export default function WalletPage() {
                     </div>
                   </div>
                   <AccountCredentials accountId={account.id} />
+                  {account.rule_progress && (
+                    <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+                      {account.rule_progress.profit_target_pct !== null && (
+                        <ProgressBar
+                          label={`Profit target (${account.rule_progress.profit_target_pct}%)`}
+                          value={
+                            (account.rule_progress.profit_progress_pct /
+                              account.rule_progress.profit_target_pct) *
+                            100
+                          }
+                        />
+                      )}
+                      <ProgressBar
+                        label="Daily drawdown used"
+                        value={account.rule_progress.daily_drawdown_used_pct}
+                        variant="danger"
+                      />
+                      <ProgressBar
+                        label="Max drawdown used"
+                        value={account.rule_progress.max_drawdown_used_pct}
+                        variant="danger"
+                      />
+                      <p className="text-xs text-slate-400">
+                        Trading days: {account.trading_days_count} / {account.rule_progress.min_trading_days}
+                      </p>
+                    </div>
+                  )}
                 </>
               )}
               {account.breach_reason && (

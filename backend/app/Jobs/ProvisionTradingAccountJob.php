@@ -47,6 +47,9 @@ class ProvisionTradingAccountJob implements ShouldQueue
             'status' => 'provisioning',
             'starting_balance' => $order->challenge->account_size,
             'highest_balance' => $order->challenge->account_size,
+            'day_start_balance' => $order->challenge->account_size,
+            'day_start_date' => now()->toDateString(),
+            'phase_start_balance' => $order->challenge->account_size,
         ]);
 
         $mt5Account = $bridge->provisionAccount([

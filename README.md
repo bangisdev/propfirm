@@ -4,15 +4,15 @@ A production-track SaaS platform for running a CFD prop trading firm (in the vei
 FundingPips), built incrementally, phase by phase, with real, tested code at every step —
 no placeholders or TODOs left in what's marked "done."
 
-## Status: Phase 2 complete — Challenge Purchasing, Paystack Payments, MT5 Sync
+## Status: Phase 4 complete — Funded Accounts, Withdrawals, Profit Splits
 
 | Phase | Scope | Status |
 |---|---|---|
 | **1** | Auth (JWT + rotating refresh tokens), landing page, dashboard shell | ✅ Done |
 | **2** | Challenge purchasing, Paystack payments, MT5 sync, coupon engine | ✅ Done |
-| 3 | Trading rules engine, evaluation logic | ⏳ Next |
-| 4 | Funded accounts, withdrawals, profit splits | Planned |
-| 5 | Affiliate system, KYC, support tickets | Planned |
+| **3** | Trading rules engine, evaluation logic, phase advancement | ✅ Done |
+| **4** | Funded accounts, withdrawals, profit splits, Paystack transfers | ✅ Done |
+| 5 | Affiliate system, KYC, support tickets | ⏳ Next |
 | 6 | Reporting, monitoring, deployment hardening | Planned |
 
 Building the entire platform (dozens of modules, full test suites, CI/CD, monitoring) can't
@@ -29,9 +29,11 @@ before moving to the next.
   real bug this way: Vitest was initially picking up the Playwright e2e spec files.
 - **Backend**: Laravel 12 application, including the full skeleton (`artisan`,
   `public/index.php`, storage tree, all core config files) — not just app code assuming a
-  skeleton exists. All 81 PHP files pass `php -l` syntax checking. **Not composer-installed
-  in this sandbox** (no packagist.org egress here) — install and run it locally or in CI,
-  which the GitHub Actions workflow does on every push.
+  skeleton exists. All 120 PHP files pass `php -l` syntax checking, and the 79-test Pest
+  suite (unit + feature) covers auth, checkout, coupons, webhooks, MT5 provisioning, the
+  trading rules engine, and the full payout lifecycle. **Not composer-installed in this
+  sandbox** (no packagist.org egress here) — install and run it locally or in CI, which
+  the GitHub Actions workflow does on every push.
 
 ## Phase 2: Challenge Purchasing, Paystack Payments, MT5 Sync
 
@@ -75,6 +77,80 @@ a Paystack merchant account (live secret/public keys), and an MT5 bridge service
 either license your broker's MT5 Manager API and build the bridge, or use a white-label
 provider that exposes one. Both are business/contract steps, not code.
 
+## Phase 3: Trading Rules Engine & Evaluation Logic
+
+**Design: the engine is pure.** `TradingRuleEngine::evaluate()` takes an immutable
+`AccountSnapshot` DTO (balances, thresholds, phase) and returns an outcome enum — no
+database access, no HTTP calls, no side effects. This is deliberate: it's the single
+most important piece of business logic in the whole platform (it decides who gets
+disabled and who gets funded), so it's unit-tested in complete isolation (14 tests)
+without needing a database, a queue, or a fake MT5 bridge. `TradingAccountSyncService`
+is the thin orchestration layer around it that actually touches the database and MT5 bridge.
+
+**Rule conventions used (documented since prop firms vary on these):**
+- **Max total drawdown** is *static*, measured against the account's original starting
+  balance — equity must never fall below `starting_balance × (1 − max_total_drawdown_pct)`.
+  Not a trailing high-water-mark drawdown.
+- **Max daily drawdown** allowance is a fixed percentage *of the starting balance*
+  (not of the day's opening balance), subtracted from the day's opening balance to get
+  that day's floor. This mirrors how FTMO-style rules are commonly documented — the
+  daily loss limit doesn't grow as the account grows.
+- **Each phase's profit target** is measured from the balance at the moment that phase
+  began (`phase_start_balance`), not from the account's original balance — so a Phase 2
+  target is on top of Phase 1's gains, not cumulative from zero. Phase 1 → 2 → funded all
+  reset the minimum-trading-days counter, since each phase re-earns its own.
+- **Evaluation order**: drawdown breaches are always checked before profit-target
+  passing, so an account that blew its drawdown limit on the same tick it happened to
+  also hit its profit target still fails — safety rules win over progress, always.
+
+**Orchestration**: `trading-accounts:sync` runs every 5 minutes (`withoutOverlapping`),
+pulling fresh state from the MT5 bridge for every active account, applying it, running
+the engine, and reacting — disabling the account via the bridge on a breach, or advancing
+the phase (resetting the trading-days counter and phase-start balance) on a pass.
+`trading-accounts:reset-daily-baseline` runs once daily to roll the daily drawdown floor
+forward — timezone-configurable, since "daily" means the broker's platform midnight, not UTC.
+
+## Phase 4: Funded Accounts, Withdrawals, Profit Splits
+
+**Available profit calculation**: `TradingAccount::availableProfit()` is
+`current_balance − payout_baseline_balance`. The baseline is set when an account becomes
+funded (Phase 3's sync service does this automatically) and rolls forward to the current
+balance after each *paid* payout — so every payout request only draws on profit earned
+since the last one, never double-counting. It deliberately uses `current_balance`
+(realized/closed P&L) rather than `current_equity`, so open floating profit can't be
+withdrawn before a trader actually closes the position.
+
+**Eligibility rules** (`PayoutService::assertEligible`), checked in order: account must
+be `funded`; no other payout already `pending`/`approved`/`processing` for that account;
+the cooldown (`next_payout_eligible_at`, driven by `challenge.payout_cycle_days`) must
+have elapsed; the amount must meet `challenge.min_payout_amount`; and the amount can't
+exceed available profit. Each failure returns a specific, user-facing message rather
+than a generic "not eligible."
+
+**Split calculation is pure and cent-exact**: `PayoutCalculator::split()` rounds the
+trader's share DOWN to the cent — any fractional cent goes to the firm's share, so
+`trader_amount + firm_amount` always sums exactly to the requested amount. No rounding
+drift, and the firm never accidentally overpays due to floating-point rounding. Fully
+unit-tested in isolation (5 tests), same philosophy as the rules engine in Phase 3.
+
+**Payout lifecycle**: `pending` (trader requested) → `approved` (admin reviewed) →
+`processing` (transfer accepted by Paystack) → `paid` or `failed` (final, arrives via
+the `transfer.success`/`transfer.failed` webhook — Paystack transfers are themselves
+asynchronous, so "approved" doesn't mean "money moved"). The admin approval endpoint is
+gated both by route middleware (`permission:withdrawals.approve`) and again inside the
+request/controller — a route config typo shouldn't be the only thing standing between a
+trader and another trader's payout approval.
+
+**Bank accounts**: resolved against Paystack's `/bank/resolve` endpoint *before* saving,
+so a mistyped account number is caught immediately rather than surfacing as a failed
+transfer days later. The Paystack transfer recipient (a reusable payout destination) is
+created lazily on first payout and reused afterward.
+
+**What you still need for Phase 4 to work end-to-end in production**: your Paystack
+account needs Transfers enabled (a separate approval step from standard payment
+processing — Paystack reviews this manually), and sufficient balance in your Paystack
+wallet to fund trader payouts.
+
 ## Architecture
 
 ```
@@ -90,12 +166,16 @@ propfirm/
 │   │   ├── Services/Payments/{Paystack,Order,PaymentFulfillment}Service.php
 │   │   ├── Services/Coupons/CouponService.php
 │   │   ├── Services/MT5/{MT5BridgeClientInterface,HttpMT5BridgeClient}.php
-│   │   ├── Jobs/ProvisionTradingAccountJob.php
-│   │   ├── Console/Commands/ExpireStaleOrders.php
-│   │   └── Notifications/{Auth,Payments}/*.php
+│   │   ├── Services/TradingRules/{AccountSnapshot,RuleEvaluationOutcome,
+│   │   │                          TradingRuleEngine,TradingAccountSyncService}.php
+│   │   ├── Services/Payouts/{PayoutCalculator,PayoutService}.php
+│   │   ├── Jobs/{ProvisionTradingAccountJob,ProcessPayoutJob}.php
+│   │   ├── Console/Commands/{ExpireStaleOrders,SyncTradingAccounts,
+│   │   │                     ResetDailyDrawdownBaseline}.php
+│   │   └── Notifications/{Auth,Payments,TradingRules,Payouts}/*.php
 │   ├── database/{migrations,seeders,factories}
-│   ├── routes/{api.php, api/payments.php, web.php, console.php}
-│   ├── tests/{Feature/{Auth,Challenges,Payments},Unit,Fakes}   (36 tests)
+│   ├── routes/{api.php, api/{payments,payouts}.php, web.php, console.php}
+│   ├── tests/{Feature/{Auth,Challenges,Payments,TradingRules,Payouts},Unit,Fakes}   (79 tests)
 │   ├── artisan, public/index.php, storage/, bootstrap/{app.php,providers.php,cache/}
 │   ├── config/                # app, auth, cors, jwt, database, queue, cache, session,
 │   │                           # mail, logging, filesystems, hashing, permission, activitylog, services
@@ -167,7 +247,8 @@ cd backend
 composer install
 cp .env.example .env && php artisan key:generate && php artisan jwt:secret
 php artisan migrate --env=testing
-./vendor/bin/pest        # 36 tests: auth, challenges, checkout, coupons, webhooks, MT5 provisioning
+./vendor/bin/pest        # 79 tests: auth, challenges, checkout, coupons, webhooks,
+                          # MT5 provisioning, trading rules engine, payouts
 ```
 
 ## API documentation
@@ -175,10 +256,11 @@ php artisan migrate --env=testing
 See [`docs/openapi.yaml`](./docs/openapi.yaml) — 13 endpoints across Phases 1-2, import into
 Swagger UI / Postman / Insomnia. As each phase adds endpoints, this spec grows alongside it.
 
-## Next up: Phase 3
+## Next up: Phase 5
 
-Trading rules engine — turning the daily/max drawdown, profit target, and minimum trading
-days already stored on each `Challenge` into an actual evaluator that runs against MT5
-account state (via `MT5BridgeClientInterface::fetchAccountState()`), flags breaches, and
-advances traders from `evaluation_1` → `evaluation_2` → `funded`. Say the word and we'll
-build that phase with the same standard: real code, real tests, run before it's called done.
+Affiliate system (referral tracking already has the data model from Phase 1 —
+`users.referred_by` and `referral_code` — Phase 5 adds commission calculation and
+payouts on referred traders' purchases), KYC verification (document upload + a
+provider integration like Sumsub or Onfido), and a support ticket system. Say the word
+and we'll build that phase with the same standard: real code, real tests, run before
+it's called done.

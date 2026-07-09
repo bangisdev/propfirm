@@ -11,6 +11,7 @@ import {
   Sun,
   LogOut,
   Menu,
+  Banknote,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth-store'
@@ -19,7 +20,8 @@ import { authService } from '@/lib/auth-service'
 const navItems = [
   { to: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { to: '/dashboard/challenges', label: 'Challenges', icon: Trophy },
-  { to: '/dashboard/wallet', label: 'Wallet & Payouts', icon: Wallet },
+  { to: '/dashboard/wallet', label: 'Wallet', icon: Wallet },
+  { to: '/dashboard/payouts', label: 'Payouts', icon: Banknote },
   { to: '/dashboard/affiliate', label: 'Affiliate', icon: Users },
   { to: '/dashboard/support', label: 'Support', icon: LifeBuoy },
   { to: '/dashboard/settings', label: 'Settings', icon: Settings },

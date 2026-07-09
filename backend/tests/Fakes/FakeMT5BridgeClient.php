@@ -8,6 +8,8 @@ class FakeMT5BridgeClient implements MT5BridgeClientInterface
 {
     public static bool $shouldFail = false;
     public static array $provisionedCalls = [];
+    public static ?array $stateOverride = null;
+    public static array $disabledLogins = [];
 
     public function provisionAccount(array $params): array
     {
@@ -26,7 +28,7 @@ class FakeMT5BridgeClient implements MT5BridgeClientInterface
 
     public function fetchAccountState(int $login): array
     {
-        return [
+        return self::$stateOverride ?? [
             'balance' => 10000.0,
             'equity' => 10000.0,
             'open_positions' => 0,
@@ -36,12 +38,14 @@ class FakeMT5BridgeClient implements MT5BridgeClientInterface
 
     public function disableAccount(int $login): void
     {
-        //
+        self::$disabledLogins[] = $login;
     }
 
     public static function reset(): void
     {
         self::$shouldFail = false;
         self::$provisionedCalls = [];
+        self::$stateOverride = null;
+        self::$disabledLogins = [];
     }
 }

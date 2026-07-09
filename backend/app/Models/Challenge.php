@@ -13,7 +13,7 @@ class Challenge extends Model
         'name', 'slug', 'phase_count', 'account_size', 'currency', 'price',
         'profit_target_phase1_pct', 'profit_target_phase2_pct',
         'max_daily_drawdown_pct', 'max_total_drawdown_pct',
-        'min_trading_days', 'profit_split_pct',
+        'min_trading_days', 'profit_split_pct', 'min_payout_amount', 'payout_cycle_days',
         'news_trading_restricted', 'weekend_holding_allowed',
         'is_active', 'sort_order',
     ];
@@ -28,6 +28,7 @@ class Challenge extends Model
             'max_daily_drawdown_pct' => 'decimal:2',
             'max_total_drawdown_pct' => 'decimal:2',
             'profit_split_pct' => 'decimal:2',
+            'min_payout_amount' => 'decimal:2',
             'news_trading_restricted' => 'boolean',
             'weekend_holding_allowed' => 'boolean',
             'is_active' => 'boolean',

@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Services\TradingRules\TradingRuleEngine;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -9,6 +10,9 @@ class TradingAccountResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        $engine = app(TradingRuleEngine::class);
+        $snapshot = $this->resource->isProvisioned() ? $this->resource->toSnapshot() : null;
+
         return [
             'id' => $this->id,
             'mt5_login' => $this->mt5_login,
@@ -23,6 +27,13 @@ class TradingAccountResource extends JsonResource
             'provisioned_at' => $this->provisioned_at?->toIso8601String(),
             'breached_at' => $this->breached_at?->toIso8601String(),
             'breach_reason' => $this->breach_reason,
+            'rule_progress' => $snapshot ? [
+                'min_trading_days' => $snapshot->minTradingDays,
+                'profit_target_pct' => $snapshot->profitTargetPct,
+                'profit_progress_pct' => $engine->profitProgressPct($snapshot),
+                'daily_drawdown_used_pct' => $engine->dailyDrawdownUsedPct($snapshot),
+                'max_drawdown_used_pct' => $engine->maxDrawdownUsedPct($snapshot),
+            ] : null,
         ];
     }
 }

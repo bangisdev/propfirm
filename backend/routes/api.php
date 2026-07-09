@@ -25,4 +25,5 @@ Route::prefix('v1')->group(function () {
     // affiliate, kyc, support) are registered in their own route files and
     // included here as those modules are built.
     require __DIR__.'/api/payments.php';
+    require __DIR__.'/api/payouts.php';
 });

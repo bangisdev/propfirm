@@ -3,7 +3,9 @@
 namespace App\Http\Controllers\Api\V1\Payments;
 
 use App\Http\Controllers\Controller;
+use App\Models\PayoutRequest;
 use App\Models\PaymentWebhookEvent;
+use App\Notifications\Payouts\PayoutPaidNotification;
 use App\Services\Payments\PaymentFulfillmentService;
 use App\Services\Payments\PaystackService;
 use Illuminate\Http\Request;
@@ -68,8 +70,44 @@ class PaystackWebhookController extends Controller
             }
         }
 
+        if (in_array($payload['event'] ?? null, ['transfer.success', 'transfer.failed', 'transfer.reversed'], true)) {
+            $this->handleTransferEvent($payload);
+        }
+
         $event->update(['processed_at' => now()]);
 
         return response()->noContent(200);
+    }
+
+    private function handleTransferEvent(array $payload): void
+    {
+        $transferCode = $payload['data']['transfer_code'] ?? null;
+        if (! $transferCode) {
+            return;
+        }
+
+        $payout = PayoutRequest::where('paystack_transfer_code', $transferCode)->first();
+        if (! $payout || $payout->status !== 'processing') {
+            return; // already handled, or not a payout transfer (e.g. an unrelated Paystack transfer)
+        }
+
+        if ($payload['event'] === 'transfer.success') {
+            $payout->update(['status' => 'paid', 'paid_at' => now()]);
+
+            // Roll the payout baseline forward so the NEXT payout only pays out
+            // profit earned after this one, and reset the eligibility cooldown.
+            $account = $payout->tradingAccount;
+            $account->update([
+                'payout_baseline_balance' => $account->current_balance,
+                'next_payout_eligible_at' => now()->addDays($account->challenge->payout_cycle_days),
+            ]);
+
+            $payout->user->notify(new PayoutPaidNotification($payout));
+        } else {
+            $payout->update([
+                'status' => 'failed',
+                'admin_notes' => 'Paystack reported: '.($payload['event']),
+            ]);
+        }
     }
 }
