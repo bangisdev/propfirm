@@ -26,4 +26,7 @@ Route::prefix('v1')->group(function () {
     // included here as those modules are built.
     require __DIR__.'/api/payments.php';
     require __DIR__.'/api/payouts.php';
+    require __DIR__.'/api/affiliate.php';
+    require __DIR__.'/api/kyc.php';
+    require __DIR__.'/api/support.php';
 });

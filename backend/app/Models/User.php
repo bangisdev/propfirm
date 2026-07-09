@@ -83,6 +83,26 @@ class User extends Authenticatable implements JWTSubject
         return $this->hasMany(RefreshToken::class);
     }
 
+    public function affiliateCommissionsEarned()
+    {
+        return $this->hasMany(AffiliateCommission::class, 'affiliate_user_id');
+    }
+
+    public function kycSubmissions()
+    {
+        return $this->hasMany(KycSubmission::class);
+    }
+
+    public function supportTickets()
+    {
+        return $this->hasMany(SupportTicket::class);
+    }
+
+    public function orders()
+    {
+        return $this->hasMany(Order::class);
+    }
+
     // --- Activity log config ---
 
     public function getActivitylogOptions(): LogOptions

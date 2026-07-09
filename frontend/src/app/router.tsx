@@ -8,6 +8,9 @@ import ChallengesPage from '@/pages/dashboard/challenges/challenges-page'
 import CheckoutCallbackPage from '@/pages/dashboard/challenges/checkout-callback-page'
 import WalletPage from '@/pages/dashboard/wallet-page'
 import PayoutsPage from '@/pages/dashboard/payouts/payouts-page'
+import AffiliatePage from '@/pages/dashboard/affiliate/affiliate-page'
+import SupportPage from '@/pages/dashboard/support/support-page'
+import SettingsPage from '@/pages/dashboard/settings/settings-page'
 import { ProtectedRoute } from '@/app/protected-route'
 
 export const router = createBrowserRouter([
@@ -25,6 +28,9 @@ export const router = createBrowserRouter([
           { path: 'challenges', element: <ChallengesPage /> },
           { path: 'wallet', element: <WalletPage /> },
           { path: 'payouts', element: <PayoutsPage /> },
+          { path: 'affiliate', element: <AffiliatePage /> },
+          { path: 'support', element: <SupportPage /> },
+          { path: 'settings', element: <SettingsPage /> },
         ],
       },
       // Outside the dashboard shell — full-screen confirmation page after Paystack redirect.

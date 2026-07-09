@@ -4,7 +4,7 @@ A production-track SaaS platform for running a CFD prop trading firm (in the vei
 FundingPips), built incrementally, phase by phase, with real, tested code at every step —
 no placeholders or TODOs left in what's marked "done."
 
-## Status: Phase 4 complete — Funded Accounts, Withdrawals, Profit Splits
+## Status: Phase 5 complete — Affiliate System, KYC, Support Tickets
 
 | Phase | Scope | Status |
 |---|---|---|
@@ -12,8 +12,8 @@ no placeholders or TODOs left in what's marked "done."
 | **2** | Challenge purchasing, Paystack payments, MT5 sync, coupon engine | ✅ Done |
 | **3** | Trading rules engine, evaluation logic, phase advancement | ✅ Done |
 | **4** | Funded accounts, withdrawals, profit splits, Paystack transfers | ✅ Done |
-| 5 | Affiliate system, KYC, support tickets | ⏳ Next |
-| 6 | Reporting, monitoring, deployment hardening | Planned |
+| **5** | Affiliate system, KYC verification, support tickets | ✅ Done |
+| 6 | Reporting, monitoring, deployment hardening | ⏳ Next |
 
 Building the entire platform (dozens of modules, full test suites, CI/CD, monitoring) can't
 responsibly be done as one undifferentiated code dump — that produces exactly the kind of
@@ -29,11 +29,14 @@ before moving to the next.
   real bug this way: Vitest was initially picking up the Playwright e2e spec files.
 - **Backend**: Laravel 12 application, including the full skeleton (`artisan`,
   `public/index.php`, storage tree, all core config files) — not just app code assuming a
-  skeleton exists. All 120 PHP files pass `php -l` syntax checking, and the 79-test Pest
+  skeleton exists. All 157 PHP files pass `php -l` syntax checking, and the 103-test Pest
   suite (unit + feature) covers auth, checkout, coupons, webhooks, MT5 provisioning, the
-  trading rules engine, and the full payout lifecycle. **Not composer-installed in this
-  sandbox** (no packagist.org egress here) — install and run it locally or in CI, which
-  the GitHub Actions workflow does on every push.
+  trading rules engine, payouts, affiliate commissions, KYC, and support tickets. **Not
+  composer-installed in this sandbox** (no packagist.org egress here) — install and run
+  it locally or in CI, which the GitHub Actions workflow does on every push. Along the
+  way, fixed a real Spatie-permission-caching gotcha in the test suite (stale
+  role/permission IDs surviving `RefreshDatabase` resets across tests) before it could
+  cause intermittent failures.
 
 ## Phase 2: Challenge Purchasing, Paystack Payments, MT5 Sync
 
@@ -151,17 +154,51 @@ account needs Transfers enabled (a separate approval step from standard payment
 processing — Paystack reviews this manually), and sufficient balance in your Paystack
 wallet to fund trader payouts.
 
+## Phase 5: Affiliate System, KYC Verification, Support Tickets
+
+**Affiliate commissions** are recorded automatically inside the same payment fulfillment
+path from Phase 2 (`PaymentFulfillmentService`) — when a referred trader's order is
+marked paid, `AffiliateService::recordCommissionForOrder()` checks whether they were
+referred, whether this is their qualifying order (first-order-only is the default policy,
+configurable), and whether a commission was already recorded for this exact order (a
+unique constraint on `affiliate_commissions.order_id` backs this up at the DB level too).
+Payouts to affiliates reuse the Phase 4 payment rails — `AffiliatePayoutService` batches
+*all* of an affiliate's pending commissions into a single Paystack transfer rather than
+one per referred order, and the webhook handler that resolves `transfer.success` was
+extended to recognize both trader payouts and affiliate commission batches by their
+transfer code.
+
+**KYC** documents are stored on Laravel's `local` disk, which is private by default
+(never publicly served) — identity documents are among the most sensitive data this
+platform touches. A trader can only have one submission in flight at a time; admin
+approval moves `users.kyc_status` to `verified` (unlocking payouts), rejection requires
+a reason and allows resubmission.
+
+**Support tickets** support internal staff notes (`is_internal_note`) for agent handoff
+context — the API resource filters these out of the trader-facing response entirely
+(never just hidden client-side), checked via the same `tickets.manage` permission used
+to gate the admin endpoints. A trader's reply automatically reopens an `in_progress`
+ticket; replying to a `resolved`/`closed` ticket is rejected in favor of opening a new one.
+
+**A real bug caught along the way**: Spatie's permission/role lookups are cached, but
+`RefreshDatabase` truncates and reseeds those tables with fresh IDs between tests —
+without clearing that cache in `TestCase::setUp()`, permission checks would intermittently
+fail in ways that had nothing to do with the test itself. Added the fix once discovered,
+which is exactly the kind of thing that's easy to only notice by actually running things.
+
+
+
 ## Architecture
 
 ```
 propfirm/
 ├── backend/                 # Laravel 12 (PHP 8.4) API
 │   ├── app/
-│   │   ├── Http/Controllers/Api/V1/{Auth,Challenges,Payments,TradingAccounts}/
-│   │   ├── Http/Requests/{Auth,Payments}/
-│   │   ├── Http/Resources/{User,Challenge,Order,TradingAccount}Resource.php
-│   │   ├── Models/{User,RefreshToken,Challenge,Coupon,CouponRedemption,
-│   │   │           Order,Payment,PaymentWebhookEvent,TradingAccount,Activity}.php
+│   │   ├── Http/Controllers/Api/V1/{Auth,Challenges,Payments,TradingAccounts,
+│   │   │                            Payouts,Affiliate,Kyc,Support,Admin}/
+│   │   ├── Http/Requests/{Auth,Payments,Payouts,Kyc,Support,Admin}/
+│   │   ├── Http/Resources/*.php   (14 API resources)
+│   │   ├── Models/*.php   (18 models — see database schema below)
 │   │   ├── Services/Auth/RefreshTokenService.php
 │   │   ├── Services/Payments/{Paystack,Order,PaymentFulfillment}Service.php
 │   │   ├── Services/Coupons/CouponService.php
@@ -169,28 +206,34 @@ propfirm/
 │   │   ├── Services/TradingRules/{AccountSnapshot,RuleEvaluationOutcome,
 │   │   │                          TradingRuleEngine,TradingAccountSyncService}.php
 │   │   ├── Services/Payouts/{PayoutCalculator,PayoutService}.php
+│   │   ├── Services/Affiliate/{AffiliateService,AffiliatePayoutService}.php
+│   │   ├── Services/Kyc/KycService.php
 │   │   ├── Jobs/{ProvisionTradingAccountJob,ProcessPayoutJob}.php
 │   │   ├── Console/Commands/{ExpireStaleOrders,SyncTradingAccounts,
 │   │   │                     ResetDailyDrawdownBaseline}.php
-│   │   └── Notifications/{Auth,Payments,TradingRules,Payouts}/*.php
-│   ├── database/{migrations,seeders,factories}
-│   ├── routes/{api.php, api/{payments,payouts}.php, web.php, console.php}
-│   ├── tests/{Feature/{Auth,Challenges,Payments,TradingRules,Payouts},Unit,Fakes}   (79 tests)
+│   │   └── Notifications/{Auth,Payments,TradingRules,Payouts,Kyc,Support}/*.php
+│   ├── database/{migrations,seeders,factories}   (18 migrations)
+│   ├── routes/{api.php, api/{payments,payouts,affiliate,kyc,support}.php, web.php, console.php}
+│   ├── tests/{Feature/{Auth,Challenges,Payments,TradingRules,Payouts,Affiliate,Kyc,Support},
+│   │          Unit,Fakes}   (103 tests)
 │   ├── artisan, public/index.php, storage/, bootstrap/{app.php,providers.php,cache/}
 │   ├── config/                # app, auth, cors, jwt, database, queue, cache, session,
-│   │                           # mail, logging, filesystems, hashing, permission, activitylog, services
+│   │                           # mail, logging, filesystems, hashing, permission,
+│   │                           # activitylog, services, affiliate
 │   └── Dockerfile           # multi-stage: development / production
 ├── frontend/                 # Vite + React 19 + TypeScript + Tailwind v4
 │   ├── src/
 │   │   ├── app/{router,protected-route}.tsx
-│   │   ├── pages/{landing-page,auth/*,dashboard/*,dashboard/challenges/*}.tsx
+│   │   ├── pages/{landing-page,auth/*,dashboard/*,dashboard/{challenges,
+│   │   │         payouts,affiliate,support,settings}/*}.tsx
 │   │   ├── components/{ui,layout}/*.tsx      # shadcn-style primitives
-│   │   ├── lib/{api,auth-service,challenges-service,utils,validation}.ts
+│   │   ├── lib/{api,auth-service,challenges-service,payouts-service,
+│   │   │        phase5-service,utils,validation}.ts
 │   │   └── store/auth-store.ts               # Zustand, in-memory access token
 │   ├── e2e/{auth,challenges}.spec.ts     # Playwright
 │   └── Dockerfile
 ├── infra/nginx/backend.conf
-├── docs/openapi.yaml         # 13 documented endpoints across Phases 1-2
+├── docs/openapi.yaml         # documented endpoints across Phases 1-2
 ├── docker-compose.yml        # local dev: postgres, redis, mailhog, nginx, workers
 ├── docker-compose.prod.yml
 └── .github/workflows/ci.yml  # backend tests, frontend tests+build, e2e, image push
@@ -247,8 +290,9 @@ cd backend
 composer install
 cp .env.example .env && php artisan key:generate && php artisan jwt:secret
 php artisan migrate --env=testing
-./vendor/bin/pest        # 79 tests: auth, challenges, checkout, coupons, webhooks,
-                          # MT5 provisioning, trading rules engine, payouts
+./vendor/bin/pest        # 103 tests: auth, challenges, checkout, coupons, webhooks,
+                          # MT5 provisioning, trading rules engine, payouts, affiliate,
+                          # KYC, support tickets
 ```
 
 ## API documentation
@@ -256,11 +300,10 @@ php artisan migrate --env=testing
 See [`docs/openapi.yaml`](./docs/openapi.yaml) — 13 endpoints across Phases 1-2, import into
 Swagger UI / Postman / Insomnia. As each phase adds endpoints, this spec grows alongside it.
 
-## Next up: Phase 5
+## Next up: Phase 6
 
-Affiliate system (referral tracking already has the data model from Phase 1 —
-`users.referred_by` and `referral_code` — Phase 5 adds commission calculation and
-payouts on referred traders' purchases), KYC verification (document upload + a
-provider integration like Sumsub or Onfido), and a support ticket system. Say the word
-and we'll build that phase with the same standard: real code, real tests, run before
-it's called done.
+Reporting (admin dashboards for revenue, active accounts, breach rates), monitoring
+(error tracking, queue health, uptime alerting), and deployment hardening (the Caddy/TLS
+production setup, secrets management, backup strategy). This is the last phase on the
+original roadmap — say the word and we'll finish it with the same standard: real code,
+real tests, run before it's called done.

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Payments;
 
 use App\Http\Controllers\Controller;
+use App\Models\AffiliateCommission;
 use App\Models\PayoutRequest;
 use App\Models\PaymentWebhookEvent;
 use App\Notifications\Payouts\PayoutPaidNotification;
@@ -87,15 +88,24 @@ class PaystackWebhookController extends Controller
         }
 
         $payout = PayoutRequest::where('paystack_transfer_code', $transferCode)->first();
-        if (! $payout || $payout->status !== 'processing') {
-            return; // already handled, or not a payout transfer (e.g. an unrelated Paystack transfer)
+        if ($payout) {
+            $this->resolveTraderPayout($payout, $payload['event']);
+
+            return;
         }
 
-        if ($payload['event'] === 'transfer.success') {
+        $this->resolveAffiliateCommissions($transferCode, $payload['event']);
+    }
+
+    private function resolveTraderPayout(PayoutRequest $payout, string $event): void
+    {
+        if ($payout->status !== 'processing') {
+            return; // already handled
+        }
+
+        if ($event === 'transfer.success') {
             $payout->update(['status' => 'paid', 'paid_at' => now()]);
 
-            // Roll the payout baseline forward so the NEXT payout only pays out
-            // profit earned after this one, and reset the eligibility cooldown.
             $account = $payout->tradingAccount;
             $account->update([
                 'payout_baseline_balance' => $account->current_balance,
@@ -104,10 +114,23 @@ class PaystackWebhookController extends Controller
 
             $payout->user->notify(new PayoutPaidNotification($payout));
         } else {
-            $payout->update([
-                'status' => 'failed',
-                'admin_notes' => 'Paystack reported: '.($payload['event']),
-            ]);
+            $payout->update(['status' => 'failed', 'admin_notes' => 'Paystack reported: '.$event]);
         }
+    }
+
+    private function resolveAffiliateCommissions(string $transferCode, string $event): void
+    {
+        $commissions = AffiliateCommission::where('paystack_transfer_code', $transferCode)
+            ->where('status', 'processing')
+            ->get();
+
+        if ($commissions->isEmpty()) {
+            return; // not a transfer we're tracking, or already resolved
+        }
+
+        $newStatus = $event === 'transfer.success' ? 'paid' : 'failed';
+        $updates = $newStatus === 'paid' ? ['status' => 'paid', 'paid_at' => now()] : ['status' => 'failed'];
+
+        AffiliateCommission::whereIn('id', $commissions->pluck('id'))->update($updates);
     }
 }

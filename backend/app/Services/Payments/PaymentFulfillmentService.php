@@ -7,12 +7,16 @@ use App\Models\CouponRedemption;
 use App\Models\Order;
 use App\Models\Payment;
 use App\Notifications\Payments\OrderPaidNotification;
+use App\Services\Affiliate\AffiliateService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class PaymentFulfillmentService
 {
-    public function __construct(private readonly PaystackService $paystack) {}
+    public function __construct(
+        private readonly PaystackService $paystack,
+        private readonly AffiliateService $affiliate,
+    ) {}
 
     /**
      * Verifies a transaction reference against Paystack directly (never trusting
@@ -73,6 +77,7 @@ class PaymentFulfillmentService
             $order->update(['status' => 'paid', 'paid_at' => now()]);
 
             $this->recordCouponRedemption($order);
+            $this->affiliate->recordCommissionForOrder($order->fresh());
 
             ProvisionTradingAccountJob::dispatch($order->id);
             $order->user->notify(new OrderPaidNotification($order));
@@ -89,6 +94,7 @@ class PaymentFulfillmentService
         return DB::transaction(function () use ($order) {
             $order->update(['status' => 'paid', 'paid_at' => now()]);
             $this->recordCouponRedemption($order);
+            $this->affiliate->recordCommissionForOrder($order->fresh());
             ProvisionTradingAccountJob::dispatch($order->id);
             $order->user->notify(new OrderPaidNotification($order));
 
