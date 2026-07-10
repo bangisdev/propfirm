@@ -11,6 +11,8 @@ EXPOSE 5173
 CMD ["npm", "run", "dev", "--", "--host"]
 
 FROM base AS build
+ARG VITE_API_URL=/api/v1
+ENV VITE_API_URL=${VITE_API_URL}
 RUN npm ci
 COPY . .
 RUN npm run build

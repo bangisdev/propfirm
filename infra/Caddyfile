@@ -1,0 +1,29 @@
+# Caddy automatically obtains and renews TLS certificates via Let's Encrypt
+# for any domain listed below — no manual certbot/openssl steps needed.
+# Replace api.yourdomain.com and yourdomain.com with your real domains before
+# deploying, and point their DNS A records at this server's IP first.
+
+api.yourdomain.com {
+	reverse_proxy nginx:80
+
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}
+
+yourdomain.com, www.yourdomain.com {
+	reverse_proxy frontend:80
+
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+	}
+}
